@@ -9,6 +9,14 @@ canvas.width = 360;
 canvas.height = 640;
 
 /* =====================
+   UI STYLE
+===================== */
+
+const UI_FILL = "#FF2D55";     // laser red
+const UI_STROKE = "#00F5FF";   // cyan outline
+const UI_FONT = "'Orbitron', 'Exo', 'Rajdhani', system-ui, sans-serif";
+
+/* =====================
    IMAGE LOADING
 ===================== */
 
@@ -36,12 +44,18 @@ pillarImg.src = "images/pillar.png";
    GAME STATE
 ===================== */
 
-let gameStarted = false;
-let gameOver = false;
+let gameState = "start";
 let score = 0;
 
 /* =====================
-   BACKGROUND (PING-PONG)
+   HIGHSCORES (TOP 3)
+===================== */
+
+const HIGHSCORE_KEY = "spaceRidersHighscores";
+let highscores = JSON.parse(localStorage.getItem(HIGHSCORE_KEY)) || [];
+
+/* =====================
+   BACKGROUND
 ===================== */
 
 let bgFrameIndex = 0;
@@ -59,7 +73,7 @@ const ship = {
   width: 64,
   height: 48,
   velocity: 0,
-  gravity: 0.68,
+  gravity: 0.61,
   lift: -11
 };
 
@@ -68,10 +82,10 @@ let boostFrame = 0;
 let boostTimer = 0;
 
 /* =====================
-   HITBOX TUNING
+   HITBOXES
 ===================== */
 
-const SHIP_HITBOX_PADDING = { x: 10, y: 8 };
+const SHIP_HITBOX_PADDING = { x: 14, y: 10 };
 const PILLAR_HITBOX_PADDING = { x: 6, y: 6 };
 
 /* =====================
@@ -80,36 +94,71 @@ const PILLAR_HITBOX_PADDING = { x: 6, y: 6 };
 
 const pipes = [];
 const pipeWidth = 60;
-const gap = 150;
+const gap = 170;
 let pipeTimer = 0;
 let pipeSpeed = 2.5;
 
 /* =====================
-   INPUT
+   BUTTONS
 ===================== */
 
-document.addEventListener("keydown", handleInput);
-document.addEventListener("touchstart", handleInput);
+const startButton = {
+  x: canvas.width / 2 - 90,
+  y: canvas.height / 2 + 40,
+  width: 180,
+  height: 50
+};
+
+const fullscreenButton = {
+  x: canvas.width / 2 - 90,
+  y: canvas.height / 2 + 100,
+  width: 180,
+  height: 40
+};
+
+/* =====================
+   INPUT (FULLSCREEN SAFE)
+===================== */
+
+canvas.addEventListener("mousedown", e => handlePointer(e.clientX, e.clientY));
+canvas.addEventListener("touchstart", e => {
+  handlePointer(e.touches[0].clientX, e.touches[0].clientY);
+  e.preventDefault();
+});
+
 document.addEventListener("keyup", () => boosting = false);
 document.addEventListener("touchend", () => boosting = false);
 
-function handleInput() {
-  if (!gameStarted) {
+document.addEventListener("keydown", e => {
+  if (e.code === "Space" && gameState === "playing") {
+    ship.velocity = ship.lift;
+    boosting = true;
+  }
+});
+
+function handlePointer(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+
+  const x = (clientX - rect.left) * scaleX;
+  const y = (clientY - rect.top) * scaleY;
+
+  if ((gameState === "start" || gameState === "gameover") && isInside(startButton, x, y)) {
     startGame();
     return;
   }
-  if (gameOver) {
-    resetGame();
+
+  if ((gameState === "start" || gameState === "gameover") && isInside(fullscreenButton, x, y)) {
+    requestFullscreen();
     return;
   }
-  ship.velocity = ship.lift;
-  boosting = true;
-}
 
-function startGame() {
-  gameStarted = true;
-  ship.velocity = ship.lift;
-  boosting = true;
+  if (gameState === "playing") {
+    ship.velocity = ship.lift;
+    boosting = true;
+  }
 }
 
 /* =====================
@@ -122,7 +171,6 @@ function update(time) {
   const delta = time - lastTime;
   lastTime = time;
 
-  /* ----- BACKGROUND ----- */
   bgTimer += delta;
   if (bgTimer > BG_FRAME_TIME) {
     bgFrameIndex += bgDirection;
@@ -133,36 +181,35 @@ function update(time) {
 
   ctx.drawImage(backgrounds[bgFrameIndex], 0, 0, canvas.width, canvas.height);
 
-  /* ----- START SCREEN ----- */
-  if (!gameStarted) {
-    drawText("TAP TO PLAY", canvas.height / 2);
-    drawText("ARCADE MODE", canvas.height / 2 + 40, 18);
+  if (gameState === "start") {
+    drawText("SPACE RIDERS", 260, 30);
+    drawButton(startButton, "START");
+    drawButton(fullscreenButton, "FULLSCREEN", 14);
     requestAnimationFrame(update);
     return;
   }
 
-  /* ----- GAME OVER SCREEN ----- */
-  if (gameOver) {
-    drawText("GAME OVER", canvas.height / 2 - 20);
-    drawText(`SCORE: ${score}`, canvas.height / 2 + 20);
-    drawText("TAP TO RESTART", canvas.height / 2 + 60, 18);
+  if (gameState === "gameover") {
+    drawText("GAME OVER", 200, 26);
+    drawText(`SCORE ${score}`, 240, 18);
+    drawHighscores(280);
+    drawButton(startButton, "RESTART");
+    drawButton(fullscreenButton, "FULLSCREEN", 14);
     requestAnimationFrame(update);
     return;
   }
 
-  /* ----- SHIP PHYSICS ----- */
   ship.velocity += ship.gravity;
   ship.y += ship.velocity;
 
-  /* ----- SHIP DRAW ----- */
-  let shipImg = shipIdle;
+  let img = shipIdle;
   if (boosting) {
     boostTimer += delta;
     if (boostTimer > 50) {
       boostFrame = (boostFrame + 1) % shipBoostFrames.length;
       boostTimer = 0;
     }
-    shipImg = shipBoostFrames[boostFrame];
+    img = shipBoostFrames[boostFrame];
   } else {
     boostFrame = 0;
   }
@@ -170,12 +217,11 @@ function update(time) {
   ctx.save();
   ctx.translate(ship.x + ship.width / 2, ship.y + ship.height / 2);
   ctx.rotate(ship.velocity * 0.035);
-  ctx.drawImage(shipImg, -ship.width / 2, -ship.height / 2, ship.width, ship.height);
+  ctx.drawImage(img, -ship.width / 2, -ship.height / 2, ship.width, ship.height);
   ctx.restore();
 
-  /* ----- PIPE SPAWN ----- */
   pipeTimer += delta;
-  if (pipeTimer > 1300) {
+  if (pipeTimer > 1400) {
     const top = Math.random() * (canvas.height - gap - 120) + 60;
     pipes.push({
       x: canvas.width,
@@ -186,54 +232,39 @@ function update(time) {
     pipeTimer = 0;
   }
 
-  /* ----- PIPES + COLLISION ----- */
   pipes.forEach(pipe => {
     pipe.x -= pipeSpeed;
 
-    // Draw top (flipped)
     ctx.save();
     ctx.translate(pipe.x + pipeWidth / 2, pipe.top / 2);
     ctx.scale(1, -1);
     ctx.drawImage(pillarImg, -pipeWidth / 2, -pipe.top / 2, pipeWidth, pipe.top);
     ctx.restore();
 
-    // Draw bottom
-    ctx.drawImage(
-      pillarImg,
-      pipe.x,
-      canvas.height - pipe.bottom,
-      pipeWidth,
-      pipe.bottom
-    );
+    ctx.drawImage(pillarImg, pipe.x, canvas.height - pipe.bottom, pipeWidth, pipe.bottom);
 
-    // HITBOXES
-    const shipHitbox = {
+    const shipHB = {
       x: ship.x + SHIP_HITBOX_PADDING.x,
       y: ship.y + SHIP_HITBOX_PADDING.y,
       width: ship.width - SHIP_HITBOX_PADDING.x * 2,
       height: ship.height - SHIP_HITBOX_PADDING.y * 2
     };
 
-    const topHitbox = {
+    const topHB = {
       x: pipe.x + PILLAR_HITBOX_PADDING.x,
       y: 0,
       width: pipeWidth - PILLAR_HITBOX_PADDING.x * 2,
-      height: pipe.top - PILLAR_HITBOX_PADDING.y
+      height: pipe.top
     };
 
-    const bottomHitbox = {
+    const bottomHB = {
       x: pipe.x + PILLAR_HITBOX_PADDING.x,
-      y: canvas.height - pipe.bottom + PILLAR_HITBOX_PADDING.y,
+      y: canvas.height - pipe.bottom,
       width: pipeWidth - PILLAR_HITBOX_PADDING.x * 2,
-      height: pipe.bottom - PILLAR_HITBOX_PADDING.y
+      height: pipe.bottom
     };
 
-    if (
-      rectsOverlap(shipHitbox, topHitbox) ||
-      rectsOverlap(shipHitbox, bottomHitbox)
-    ) {
-      gameOver = true;
-    }
+    if (overlap(shipHB, topHB) || overlap(shipHB, bottomHB)) endGame();
 
     if (!pipe.passed && pipe.x + pipeWidth < ship.x) {
       score++;
@@ -242,54 +273,98 @@ function update(time) {
   });
 
   if (pipes.length && pipes[0].x < -pipeWidth) pipes.shift();
+  if (ship.y < 0 || ship.y + ship.height > canvas.height) endGame();
 
-  /* ----- BOUNDS ----- */
-  if (ship.y < 0 || ship.y + ship.height > canvas.height) {
-    gameOver = true;
-  }
-
-  /* ----- HUD ----- */
-  ctx.fillStyle = "white";
-  ctx.font = "22px Arial";
-  ctx.fillText(score, 20, 40);
+  drawOutlinedText(score.toString(), 20, 36, 18);
 
   requestAnimationFrame(update);
 }
 
 /* =====================
-   RESET
+   DRAW HELPERS
 ===================== */
+
+function drawOutlinedText(text, x, y, size) {
+  ctx.font = `${size}px ${UI_FONT}`;
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = UI_STROKE;
+  ctx.strokeText(text, x, y);
+  ctx.fillStyle = UI_FILL;
+  ctx.fillText(text, x, y);
+}
+
+function drawText(text, y, size) {
+  ctx.font = `${size}px ${UI_FONT}`;
+  ctx.textAlign = "center";
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = UI_STROKE;
+  ctx.strokeText(text, canvas.width / 2, y);
+  ctx.fillStyle = UI_FILL;
+  ctx.fillText(text, canvas.width / 2, y);
+  ctx.textAlign = "left";
+}
+
+function drawButton(btn, label, size = 18) {
+  ctx.strokeStyle = UI_STROKE;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(btn.x, btn.y, btn.width, btn.height);
+  ctx.font = `${size}px ${UI_FONT}`;
+  ctx.textAlign = "center";
+  ctx.strokeText(label, canvas.width / 2, btn.y + btn.height / 2 + 6);
+  ctx.fillStyle = UI_FILL;
+  ctx.fillText(label, canvas.width / 2, btn.y + btn.height / 2 + 6);
+  ctx.textAlign = "left";
+}
+
+function drawHighscores(y) {
+  drawText("TOP 3", y, 14);
+  highscores.forEach((s, i) => {
+    drawOutlinedText(`${i + 1}. ${s}`, canvas.width / 2, y + 24 + i * 18, 14);
+  });
+}
+
+function startGame() {
+  resetGame();
+  gameState = "playing";
+}
+
+function endGame() {
+  saveHighscore(score);
+  gameState = "gameover";
+}
 
 function resetGame() {
   ship.y = 300;
   ship.velocity = 0;
   pipes.length = 0;
   score = 0;
-  gameOver = false;
   boosting = false;
   boostFrame = 0;
   pipeTimer = 0;
 }
 
-/* =====================
-   HELPERS
-===================== */
-
-function rectsOverlap(a, b) {
-  return (
-    a.x < b.x + b.width &&
-    a.x + a.width > b.x &&
-    a.y < b.y + b.height &&
-    a.y + a.height > b.y
-  );
+function saveHighscore(s) {
+  highscores.push(s);
+  highscores.sort((a, b) => b - a);
+  highscores = highscores.slice(0, 3);
+  localStorage.setItem(HIGHSCORE_KEY, JSON.stringify(highscores));
 }
 
-function drawText(text, y, size = 26) {
-  ctx.fillStyle = "white";
-  ctx.font = `${size}px Arial`;
-  ctx.textAlign = "center";
-  ctx.fillText(text, canvas.width / 2, y);
-  ctx.textAlign = "left";
+function isInside(btn, x, y) {
+  return x > btn.x && x < btn.x + btn.width &&
+         y > btn.y && y < btn.y + btn.height;
+}
+
+function overlap(a, b) {
+  return a.x < b.x + b.width &&
+         a.x + a.width > b.x &&
+         a.y < b.y + b.height &&
+         a.y + a.height > b.y;
+}
+
+function requestFullscreen() {
+  if (canvas.requestFullscreen) canvas.requestFullscreen();
+  else if (canvas.webkitRequestFullscreen) canvas.webkitRequestFullscreen();
 }
 
 /* =====================
